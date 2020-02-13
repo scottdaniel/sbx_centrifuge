@@ -1,2 +1,4 @@
 sbx_centrifuge:
   threads: 8
+  index: "/mnt/isilon/microbiome/analysis/biodata/centrifuge/p+h+v/p+h+v" #the index filename without the trailing .1.cf
+
