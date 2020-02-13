@@ -18,7 +18,7 @@ rule run_centrifuge:
                       sample = "{sample}",
                       rp = Pairs)
     params:
-        dbdir = Cfg['sbx_centrifuge']['dbfile']
+        index = Cfg['sbx_centrifuge']['index']
     log:
         str(CLASSIFY_FP/'centrifuge'/'logs'/'centrifuge_{sample}.error')
     threads:
@@ -28,7 +28,7 @@ rule run_centrifuge:
     shell:
         """
 
-        centrifuge -p {threads} -x {params.dbdir} \
+        centrifuge -p {threads} -x {params.index} \
         -1 {input.pair[0]} -2 {input.pair[1]} \
         -S {output.cent_out} \
         --report-file {output.tsv_out} \
