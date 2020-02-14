@@ -1,13 +1,24 @@
 # -*- mode: Snakemake -*-
 
 TARGET_CENTRIFUGE = [
-    expand(str(CLASSIFY_FP/'centrifuge'/'raw'/'{sample}.hits'), sample = Samples.keys()),
-    expand(str(CLASSIFY_FP/'centrifuge'/'reports'/'{sample}.report.tsv'), sample = Samples.keys())
+        str(CLASSIFY_FP/'centrifuge'/'summary'/'all_hits.txt'),
+        str(CLASSIFY_FP/'centrifuge'/'summary'/'centrifuge_summary.tsv')
 ]
 
 rule all_centrifuge:
     input:
         TARGET_CENTRIFUGE
+
+rule make_reports:
+    output:
+        hit_summary = str(CLASSIFY_FP/'centrifuge'/'summary'/'all_hits.txt'),
+        tsv_summary = str(CLASSIFY_FP/'centrifuge'/'summary'/'centrifuge_summary.tsv')
+    input:
+        hits = expand(str(CLASSIFY_FP/'centrifuge'/'raw'/'{sample}.hits'), sample = Samples.keys()),
+        tsvs = expand(str(CLASSIFY_FP/'centrifuge'/'reports'/'{sample}.report.tsv'), sample = Samples.keys())
+    run:
+        write_tsv(tsvs, tsv_summary)
+        write_hit(hits, hit_summary)
 
 rule run_centrifuge:
     output:
@@ -35,4 +46,55 @@ rule run_centrifuge:
         2> {log}
 
         """
+
+# ----------------------------
+# ----- Helper functions -----
+# ----------------------------
+def write_tsv(files, out_fh):
+    """collapse tsv files"""
+    tax = dict()
+    num_flds = ['numReads', 'numUniqueReads']
+
+    for fnum, file in enumerate(files):
+        print('    {:4}: {}'.format(fnum + 1, os.path.basename(file)))
+        with open(file) as csvfile:
+            reader = csv.DictReader(csvfile, delimiter='\t')
+            for row in reader:
+                tax_id = row['taxID']
+                if not tax_id in tax:
+                    tax[tax_id] = dict()
+                    for fld in row.keys():
+                        tax[tax_id][fld] = int(row[fld]) \
+                                if fld in num_flds else row[fld]
+                else:
+                    for fld in num_flds:
+                        tax[tax_id][fld] += int(row[fld])
+
+    # Write the headers
+    flds = ['name', 'taxID', 'taxRank', 'genomeSize'] + \
+            num_flds + ['abundance']
+    out_fh.write("\t".join(flds) + '\n')
+
+    total_reads = sum([tax[s]['numReads'] for s in tax])
+
+    for tax_id in sorted(tax.keys(), key=int):
+        species = tax[tax_id]
+
+        species['abundance'] = round(species['numReads'] / total_reads, 2)
+
+        out_fh.write('\t'.join([str(species[f]) for f in flds]) + '\n')
+
+# --------------------------------------------------
+def write_hit(files, out_fh):
+    """collapse hit files"""
+    for fnum, file in enumerate(files):
+        print('    {:4}: {}'.format(fnum + 1, os.path.basename(file)))
+        in_fh = open(file, 'r')
+        hdr = in_fh.readline()
+        if fnum == 0:
+            out_fh.write(hdr)
+
+        for line in in_fh:
+            out_fh.write(line)
+
 
