@@ -1,29 +1,30 @@
 # -*- mode: Snakemake -*-
 
 import logging
+import pandas
 
 TARGET_CENTRIFUGE = [
         str(CLASSIFY_FP/'centrifuge'/'summary'/'all_hits.txt'),
-        str(CLASSIFY_FP/'centrifuge'/'summary'/'centrifuge_summary.tsv')
+        str(CLASSIFY_FP/'centrifuge'/'summary'/'centrifuge_all_samples.tsv')
 ]
 
 rule all_centrifuge:
     input:
         TARGET_CENTRIFUGE
 
-rule make_reports:
+rule make_summary:
     output:
         hit_summary = str(CLASSIFY_FP/'centrifuge'/'summary'/'all_hits.txt'),
-        tsv_summary = str(CLASSIFY_FP/'centrifuge'/'summary'/'centrifuge_summary.tsv')
+        tsv_summary = str(CLASSIFY_FP/'centrifuge'/'summary'/'centrifuge_all_samples.tsv')
     log:
-        str(CLASSIFY_FP/'centrifuge'/'logs'/'hits_summary.log'),
+        str(CLASSIFY_FP/'centrifuge'/'logs'/'hit_summary.log'),
         str(CLASSIFY_FP/'centrifuge'/'logs'/'tsv_summary.log')
     input:
         hits = expand(str(CLASSIFY_FP/'centrifuge'/'raw'/'{sample}.hits'), sample = Samples.keys()),
         tsvs = expand(str(CLASSIFY_FP/'centrifuge'/'reports'/'{sample}.report.tsv'), sample = Samples.keys())
     run:
-        write_hit(input.hits, output.hit_summary, log[0])
-        write_tsv(input.tsvs, output.tsv_summary, log[1])
+        write_hits(input.hits, output.hit_summary, log[0])
+        write_tsvs(input.tsvs, output.tsv_summary, log[1])
 
 rule run_centrifuge:
     output:
@@ -55,74 +56,63 @@ rule run_centrifuge:
 # ----------------------------
 # ----- Helper functions -----
 # ----------------------------
-def write_tsv(files, out_fp, log):
-    """collapse tsv files"""
-    logger = logging.getLogger('summariz tsv log')
+def write_tsvs(files, out_fp, log):
+    """write file that has all samples"""
+    logger = logging.getLogger('__name__')
     fh = logging.FileHandler(str(log))
-    fh.setLevel(logging.INFO)
+    fh.setLevel(logging.DEBUG)
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     fh.setFormatter(formatter)
     logger.addHandler(fh)
 
+    logger.info('Starting operation!')
+
     try:
-        logger.info('Starting operation!')
+        tax_ids = []
+     
+        for fnum, fp in enumerate(files):
+            
+            logger.info('    {:4}: {}'.format(fnum + 1, os.path.basename(fp)))
+            # filter out the files that don't have any results
+            if os.path.getsize(fp) > 1:
+                # build pandas dataframes for each file of results
+                tax_ids.append(parse_results(fp,".report.tsv"))
 
-        tax = dict()
-        num_flds = ['numReads', 'numUniqueReads']
+        # bind the rows together into one large dataframe
+        tax_ids = pandas.concat(tax_ids)
 
-        for fnum, file in enumerate(files):
-            print('    {:4}: {}'.format(fnum + 1, os.path.basename(file)))
-            with open(file) as csvfile:
-                reader = csv.DictReader(csvfile, delimiter='\t')
-                for row in reader:
-                    tax_id = row['taxID']
-                    if not tax_id in tax:
-                        tax[tax_id] = dict()
-                        for fld in row.keys():
-                            tax[tax_id][fld] = int(row[fld]) \
-                                    if fld in num_flds else row[fld]
-                    else:
-                        for fld in num_flds:
-                            tax[tax_id][fld] += int(row[fld])
+        # write them to file. Replace NAs (due to merging) with 0.
+        tax_ids.to_csv(out_fp, sep='\t', na_rep=0, index_label='Taxa')
 
-        with open(out_fp, 'w') as out_fh:
-
-            # Write the headers
-            flds = ['name', 'taxID', 'taxRank', 'genomeSize'] + \
-                    num_flds + ['abundance']
-
-            out_fh.write("\t".join(flds) + '\n')
-
-            total_reads = sum([tax[s]['numReads'] for s in tax])
-
-            for tax_id in sorted(tax.keys(), key=int):
-                species = tax[tax_id]
-
-                species['abundance'] = round(species['numReads'] / total_reads, 2)
-
-                out_fh.write('\t'.join([str(species[f]) for f in flds]) + '\n')
-
-        logger.info('Ended!')
-    
     except Exception as e:
         logger.error(e, exc_info=True)
 
+    logger.info('Ended!')
+
 # --------------------------------------------------
-def write_hit(files, out_fp, log):
+def parse_results(fp, input_suffix):
+    """ Return a DataFrame containing the results of one sample"""
+    sample_name = os.path.basename(fp).rsplit(input_suffix)[0]
+    df = pandas.read_csv(fp, sep='\t', index_col=0)
+    df['SampleID'] = sample_name
+    return df
+
+# --------------------------------------------------
+def write_hits(files, out_fp, log):
     """collapse hit files"""
-    logger = logging.getLogger('summarize hits log')
+    logger = logging.getLogger('__name__')
     fh = logging.FileHandler(str(log))
-    fh.setLevel(logging.INFO)
+    fh.setLevel(logging.DEBUG)
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     fh.setFormatter(formatter)
     logger.addHandler(fh)
 
-    try:
-        logger.info('Starting operation!')
+    logger.info('Starting operation!')
 
-        for fnum, file in enumerate(files):
-            print('    {:4}: {}'.format(fnum + 1, os.path.basename(file)))
-            in_fh = open(file, 'r')
+    try:
+        for fnum, fp in enumerate(files):
+            logger.info('    {:4}: {}'.format(fnum + 1, os.path.basename(fp)))
+            in_fh = open(fp, 'r')
             hdr = in_fh.readline()
 
             with open(out_fp, 'w') as out_fh:
@@ -132,9 +122,67 @@ def write_hit(files, out_fp, log):
 
                 for line in in_fh:
                     out_fh.write(line)
-        logger.info('Ended!')
         
     except Exception as e:
         logger.error(e, exc_info=True)
 
+    logger.info('Ended!')
+    
 
+# ------------------------------------------
+# currently not used because it loses all the samples names
+# it will just give you the totals and recalculated abundances
+# in your whole experiment / study / run
+#def write_grand_summary(files, out_fp, log):
+#    """collapse tsv files"""
+#    logger = logging.getLogger('__name__')
+#    fh = logging.FileHandler(str(log))
+#    fh.setLevel(logging.DEBUG)
+#    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+#    fh.setFormatter(formatter)
+#    logger.addHandler(fh)
+#
+#    try:
+#        logger.info('Starting operation!')
+#
+#        tax = dict()
+#        num_flds = ['numReads', 'numUniqueReads']
+#
+#        for fnum, file in enumerate(files):
+#            logger.info('    {:4}: {}'.format(fnum + 1, os.path.basename(file)))
+#            with open(file) as csvfile:
+#                reader = csv.DictReader(csvfile, delimiter='\t')
+#                for row in reader:
+#                    tax_id = row['taxID']
+#                    if not tax_id in tax:
+#                        tax[tax_id] = dict()
+#                        for fld in row.keys():
+#                            tax[tax_id][fld] = int(row[fld]) \
+#                                    if fld in num_flds else row[fld]
+#                    else:
+#                        for fld in num_flds:
+#                            tax[tax_id][fld] += int(row[fld])
+#
+#        with open(out_fp, 'w') as out_fh:
+#
+#            # Write the headers
+#            flds = ['name', 'taxID', 'taxRank', 'genomeSize'] + \
+#                    num_flds + ['abundance']
+#
+#            out_fh.write("\t".join(flds) + '\n')
+#
+#            total_reads = sum([tax[s]['numReads'] for s in tax])
+#
+#            for tax_id in sorted(tax.keys(), key=int):
+#                species = tax[tax_id]
+#
+#                species['abundance'] = round(species['numReads'] / total_reads, 2)
+#
+#                out_fh.write('\t'.join([str(species[f]) for f in flds]) + '\n')
+#
+#        logger.info('Ended!')
+#    
+#    except Exception as e:
+#        logger.error(e, exc_info=True)
+#
+#
